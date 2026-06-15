@@ -27,7 +27,6 @@ function App() {
   };
 
   const handleFileChange = (e) => {
-    // CORRECCIÓN: Volvemos a agregar el [0] para capturar el archivo individual
     const selectedFile = e.target.files[0];
     
     if (!selectedFile) {
@@ -35,7 +34,6 @@ function App() {
       return;
     }
 
-    // Validación de formato y tamaño para P-03
     const name = selectedFile.name.toLowerCase();
     const isAllowed = name.endsWith('.mp3') || name.endsWith('.wav');
 
@@ -51,7 +49,6 @@ function App() {
       return;
     }
 
-    // ¡ESTA LÍNEA ES LA QUE HABILITA EL BOTÓN!
     setFile(selectedFile);
     setStatus(`Archivo listo para subir: ${selectedFile.name}`);
   };
@@ -61,29 +58,26 @@ function App() {
     setStatus("Solicitando permiso a S3...");
     setUploadProgress(0);
 
-    // Evitamos strings vacíos en el Content-Type
     const cleanFileType = file.type && file.type.trim() !== "" ? file.type : "audio/mpeg";
 
     try {
-      // CU-01: Obtener Presigned URL incluyendo los 3 parámetros de FastAPI (fileName, fileType, fileSize)
       const { data } = await axios.post("http://localhost:8000/api/upload/presigned-url", {
         fileName: file.name,
         fileType: cleanFileType,
         fileSize: file.size
       });
 
-      // CU-01: Subida directa con barra de progreso
       await axios.put(data.presignedUrl, file, {
         headers: { "Content-Type": cleanFileType },
         onUploadProgress: (p) => setUploadProgress(Math.round((p.loaded * 100) / p.total))
       });
 
       setStatus("¡Subida exitosa!");
-      setFile(null); // Limpiar selección tras éxito
+      setFile(null); 
       setUploadProgress(0);
-      fetchFiles(); // Refrescar tabla (CU-02)
+      fetchFiles(); 
     } catch (error) {
-      setStatus("Error en la subida. Verifica tus credenciales AWS.");
+      setStatus("Error en la subida.");
       console.error(error);
     }
   };
@@ -95,7 +89,7 @@ function App() {
       setStatus("Eliminando...");
       await axios.delete(`http://localhost:8000/api/files/${key}`);
       setStatus("Archivo eliminado.");
-      fetchFiles(); // Refrescar tabla tras eliminar
+      fetchFiles(); 
     } catch (error) {
       setStatus("Error al eliminar el archivo.");
       console.error(error);
@@ -141,16 +135,35 @@ function App() {
           </tr>
         </thead>
         <tbody>
-          {files.map((f) => (
-            <tr key={f.key}>
-              <td style={{ padding: "10px", border: "1px solid #444" }}>{f.name}</td>
-              <td style={{ padding: "10px", border: "1px solid #444" }}>{f.size}</td>
-              <td style={{ padding: "10px", border: "1px solid #444", textAlign: "center" }}>
-                <a href={`https://${BUCKET_NAME}.s3.${REGION}.amazonaws.com/${f.key}`} target="_blank" rel="noreferrer" style={{ color: "#2196f3", marginRight: "10px" }}>Abrir</a>
-                <button onClick={() => handleDelete(f.key)} style={{ color: "#f44336", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>Eliminar</button>
-              </td>
-            </tr>
-          ))}
+          {files.map((f) => {
+            // Si el backend de tu amigo manda 'url' u 'downloadUrl', se usará automáticamente.
+            // Si no viene, caerá en la URL estática (que requiere el bucket público que configuramos).
+            const fileUrl = f.url || f.downloadUrl || `https://${BUCKET_NAME}.s3.${REGION}.amazonaws.com/${f.key}`;
+            
+            return (
+              <tr key={f.key}>
+                <td style={{ padding: "10px", border: "1px solid #444" }}>{f.name}</td>
+                <td style={{ padding: "10px", border: "1px solid #444" }}>{f.size}</td>
+                <td style={{ padding: "10px", border: "1px solid #444", textAlign: "center" }}>
+                  <a 
+                    href={fileUrl}
+                    download={f.name}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "#2196f3", marginRight: "15px", textDecoration: "underline", cursor: "pointer" }}
+                  >
+                    Descargar
+                  </a>
+                  <button 
+                    onClick={() => handleDelete(f.key)} 
+                    style={{ color: "#f44336", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", padding: 0 }}
+                  >
+                    Eliminar
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

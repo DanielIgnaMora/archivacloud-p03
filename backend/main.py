@@ -8,12 +8,12 @@ from dotenv import load_dotenv
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-# SEC-01: Carga de variables de entorno (Secretos fuera del repo) [3, 4]
+# SEC-01: Carga de variables de entorno (Secretos fuera del repo)
 load_dotenv()
 
 app = FastAPI(title="ArchivaCloud Backend - Pareja P-03")
 
-# SEC-02: CORS restrictivo para el puerto de Vite [3, 5]
+# SEC-02: CORS restrictivo para el puerto de Vite
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"], 
@@ -22,7 +22,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuración de AWS Academy y Parámetros P-03 [2, 5]
+# Configuración de AWS Academy y Parámetros P-03
 s3_client = boto3.client(
     's3',
     region_name=os.getenv("AWS_REGION", "us-west-2"), 
@@ -34,19 +34,19 @@ s3_client = boto3.client(
 
 BUCKET_NAME = os.getenv("BUCKET_NAME", "archivacloud-p03dm")
 
-# SEC-03: Modelo de validación de entrada con Pydantic [6]
+# SEC-03: Modelo de validación de entrada con Pydantic
 class UploadRequest(BaseModel):
     fileName: str = Field(..., min_length=1)
     fileType: str = Field(..., min_length=3)
     fileSize: int = Field(..., gt=0)
 
-# SEC-03: Función de sanitización de nombre de archivo [6]
+# SEC-03: Función de sanitización de nombre de archivo
 def sanitize_filename(filename: str) -> str:
     name, ext = os.path.splitext(filename)
     clean_name = re.sub(r'[^a-zA-Z0-9.-]', '_', name)
     return f"{clean_name}{ext.lower()}"
 
-# Endpoint de Salud (Requisito Sprint 1) [1, 7]
+# Endpoint de Salud (Requisito Sprint 1)
 @app.get("/healthz")
 def health_check():
     return {
@@ -56,15 +56,15 @@ def health_check():
         "bucket": BUCKET_NAME
     }
 
-# CU-01 & CU-05: Generar Presigned URL con validaciones P-03 [1, 8]
+# CU-01 & CU-05: Generar Presigned URL con validaciones P-03
 @app.post("/api/upload/presigned-url")
 def get_presigned_url(request: UploadRequest):
-    # Validar tipo de archivo (P-03: MP3, WAV) [2]
+    # Validar tipo de archivo (P-03: MP3, WAV)
     allowed_types = ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp3"]
     if request.fileType.lower() not in allowed_types:
         raise HTTPException(status_code=400, detail="Tipo de archivo no permitido para P-03 (Solo MP3/WAV)")
 
-    # Validar tamaño (P-03: 20 MB = 20,971,520 bytes) [2, 3]
+    # Validar tamaño (P-03: 20 MB = 20,971,520 bytes)
     max_size = 20 * 1024 * 1024
     if request.fileSize > max_size:
         raise HTTPException(status_code=400, detail="El archivo excede el límite de 20 MB")
@@ -88,10 +88,10 @@ def get_presigned_url(request: UploadRequest):
             "publicUrl": f"https://{BUCKET_NAME}.s3.amazonaws.com/{file_key}"
         }
     except Exception:
-        # SEC-07: Error sin trazas técnicas [3]
+        # SEC-07: Error sin trazas técnicas
         raise HTTPException(status_code=500, detail="Error al generar la URL de subida")
 
-# CU-02: Listar archivos (Hito Sprint 2) [1, 8, 9]
+# CU-02: Listar archivos (Hito Sprint 2) - CORREGIDO CON URL FIRMADA DE LECTURA
 @app.get("/api/files")
 def list_files():
     try:
@@ -102,17 +102,32 @@ def list_files():
             for obj in response['Contents']:
                 # Solo incluir archivos reales, no la carpeta en sí
                 if obj['Key'] != "uploads/":
+                    
+                    # CORRECCIÓN AQUÍ: Generamos una URL firmada temporal de descarga para cada archivo
+                    try:
+                        download_url = s3_client.generate_presigned_url(
+                            'get_object',
+                            Params={
+                                'Bucket': BUCKET_NAME,
+                                'Key': obj['Key']
+                            },
+                            ExpiresIn=3600 # La firma es válida por 1 hora
+                        )
+                    except Exception:
+                        download_url = None
+
                     files.append({
                         "key": obj['Key'],
                         "name": obj['Key'].replace("uploads/", ""),
                         "size": obj['Size'],
-                        "lastModified": obj['LastModified'].isoformat()
+                        "lastModified": obj['LastModified'].isoformat(),
+                        "url": download_url # <-- Enviamos la URL firmada al Frontend
                     })
         return files
     except Exception:
         raise HTTPException(status_code=500, detail="No se pudo obtener la lista de archivos")
 
-# CU-04: Eliminar archivo (Hito Sprint 2) [1, 8, 9]
+# CU-04: Eliminar archivo (Hito Sprint 2)
 @app.delete("/api/files/{key:path}")
 def delete_file(key: str):
     try:
