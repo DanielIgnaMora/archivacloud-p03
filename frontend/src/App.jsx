@@ -2,19 +2,16 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 
 function App() {
-  // Estados para la subida
   const [file, setFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [status, setStatus] = useState("");
-  
-  // Estado para el listado de archivos (CU-02)
+  const [status, setStatus] = useState("Esperando selección de archivo...");
   const [files, setFiles] = useState([]);
 
-  // Parámetros obligatorios Pareja P-03
-  const ALLOWED_TYPES = ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp3"];
-  const MAX_SIZE = 20 * 1024 * 1024; // 20 MB [1]
+  // Parámetros Pareja P-03
+  const BUCKET_NAME = "archivacloud-p03dm"; 
+  const REGION = "us-west-2";
+  const MAX_SIZE = 20 * 1024 * 1024; // 20 MB
 
-  // Cargar lista de archivos al iniciar
   useEffect(() => {
     fetchFiles();
   }, []);
@@ -22,134 +19,135 @@ function App() {
   const fetchFiles = async () => {
     try {
       const response = await axios.get("http://localhost:8000/api/files");
-      setFiles(response.data);
+      setFiles(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
-      console.error("Error al obtener archivos", error);
+      console.error("Error al listar archivos:", error);
+      setStatus("Error al conectar con el backend.");
     }
   };
 
   const handleFileChange = (e) => {
-    const selectedFile = e.target.files;
-    if (!selectedFile) return;
+    // CORRECCIÓN: Volvemos a agregar el [0] para capturar el archivo individual
+    const selectedFile = e.target.files[0];
+    
+    if (!selectedFile) {
+      setFile(null);
+      return;
+    }
 
-    // CU-05: Validación de tipo (MP3/WAV) y tamaño (20MB) [1, 2]
-    if (!ALLOWED_TYPES.includes(selectedFile.type)) {
-      setStatus("Error: Solo se permiten archivos MP3 o WAV.");
+    // Validación de formato y tamaño para P-03
+    const name = selectedFile.name.toLowerCase();
+    const isAllowed = name.endsWith('.mp3') || name.endsWith('.wav');
+
+    if (!isAllowed) {
+      setStatus(`Error: El archivo "${selectedFile.name}" no es MP3 o WAV.`);
       setFile(null);
       return;
     }
 
     if (selectedFile.size > MAX_SIZE) {
-      setStatus("Error: El archivo excede el límite de 20 MB.");
+      setStatus("Error: El archivo supera el límite de 20 MB.");
       setFile(null);
       return;
     }
 
+    // ¡ESTA LÍNEA ES LA QUE HABILITA EL BOTÓN!
     setFile(selectedFile);
-    setStatus("Archivo validado y listo.");
+    setStatus(`Archivo listo para subir: ${selectedFile.name}`);
   };
 
   const handleUpload = async () => {
     if (!file) return;
-    setStatus("Solicitando permiso de subida...");
+    setStatus("Solicitando permiso a S3...");
     setUploadProgress(0);
 
+    // Evitamos strings vacíos en el Content-Type
+    const cleanFileType = file.type && file.type.trim() !== "" ? file.type : "audio/mpeg";
+
     try {
-      // PASO 1: Obtener Presigned URL del Backend [3]
+      // CU-01: Obtener Presigned URL incluyendo los 3 parámetros de FastAPI (fileName, fileType, fileSize)
       const { data } = await axios.post("http://localhost:8000/api/upload/presigned-url", {
         fileName: file.name,
-        fileType: file.type,
+        fileType: cleanFileType,
         fileSize: file.size
       });
 
-      // PASO 2: Subida directa a S3 con barra de progreso (CU-01) [2, 4]
-      setStatus("Subiendo directamente a Amazon S3...");
+      // CU-01: Subida directa con barra de progreso
       await axios.put(data.presignedUrl, file, {
-        headers: { "Content-Type": file.type },
-        onUploadProgress: (progressEvent) => {
-          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          setUploadProgress(percent);
-        }
+        headers: { "Content-Type": cleanFileType },
+        onUploadProgress: (p) => setUploadProgress(Math.round((p.loaded * 100) / p.total))
       });
 
-      setStatus("¡Archivo subido con éxito!");
-      setFile(null);
-      fetchFiles(); // Refrescar lista (CU-02) [2]
+      setStatus("¡Subida exitosa!");
+      setFile(null); // Limpiar selección tras éxito
+      setUploadProgress(0);
+      fetchFiles(); // Refrescar tabla (CU-02)
     } catch (error) {
-      // SEC-07: Error sin trazas técnicas [5]
-      setStatus("Error en la comunicación con el servicio.");
+      setStatus("Error en la subida. Verifica tus credenciales AWS.");
+      console.error(error);
     }
   };
 
   const handleDelete = async (key) => {
-    // CU-04: Eliminación con confirmación [2]
-    if (!window.confirm("¿Estás seguro de eliminar este archivo? Esta acción es irreversible.")) return;
+    if (!window.confirm("¿Está seguro de eliminar este archivo?")) return;
 
     try {
+      setStatus("Eliminando...");
       await axios.delete(`http://localhost:8000/api/files/${key}`);
       setStatus("Archivo eliminado.");
-      fetchFiles();
+      fetchFiles(); // Refrescar tabla tras eliminar
     } catch (error) {
-      setStatus("No se pudo eliminar el archivo.");
+      setStatus("Error al eliminar el archivo.");
+      console.error(error);
     }
   };
 
   return (
-    <div style={{ padding: "40px", fontFamily: "sans-serif" }}>
-      <h1>ArchivaCloud Portal - P-03</h1>
-      <p>Región: <strong>us-west-2</strong> | Bucket: <strong>archivacloud-p03dm</strong></p>
+    <div style={{ padding: "40px", backgroundColor: "#121212", color: "white", minHeight: "100vh", fontFamily: "sans-serif" }}>
+      <center>
+        <h1>ArchivaCloud Portal - P-03</h1>
+        <p>Región: <strong>{REGION}</strong> | Bucket: <strong>{BUCKET_NAME}</strong></p>
+      </center>
 
-      {/* Sección de Carga */}
-      <div style={{ marginBottom: "30px", border: "1px solid #ccc", padding: "20px" }}>
-        <h3>Subir Nuevo Audio (MP3/WAV - Máx 20MB)</h3>
+      <div style={{ border: "1px solid #333", padding: "20px", margin: "20px 0", borderRadius: "10px", backgroundColor: "#1e1e1e" }}>
+        <h3>Subir Audio (MP3/WAV - Máx 20MB)</h3>
         <input type="file" accept=".mp3,.wav" onChange={handleFileChange} />
-        <button onClick={handleUpload} disabled={!file} style={{ marginLeft: "10px" }}>
+        
+        <button 
+          onClick={handleUpload} 
+          disabled={!file} 
+          style={{ marginLeft: "10px", padding: "8px 20px", cursor: file ? "pointer" : "not-allowed" }}
+        >
           Subir a S3
         </button>
 
-        {/* Barra de progreso visible (CU-01) */}
         {uploadProgress > 0 && (
-          <div style={{ width: "100%", backgroundColor: "#eee", marginTop: "15px" }}>
-            <div style={{ 
-              width: `${uploadProgress}%`, 
-              height: "25px", 
-              backgroundColor: "#2196F3", 
-              color: "white", 
-              textAlign: "center" 
-            }}>
+          <div style={{ width: "100%", backgroundColor: "#444", marginTop: "15px", borderRadius: "5px" }}>
+            <div style={{ width: `${uploadProgress}%`, height: "20px", backgroundColor: "#4caf50", textAlign: "center", color: "black", fontWeight: "bold" }}>
               {uploadProgress}%
             </div>
           </div>
         )}
-        <p>Status: {status}</p>
+        <p style={{ marginTop: "10px" }}><strong>Status:</strong> {status}</p>
       </div>
 
-      {/* Sección de Listado (CU-02) */}
-      <h3>Tus Archivos en la Nube</h3>
-      <table border="1" cellPadding="10" style={{ width: "100%", borderCollapse: "collapse" }}>
+      <h3>Tus Archivos en la Nube (CU-02)</h3>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
-          <tr>
-            <th>Nombre</th>
-            <th>Tamaño (bytes)</th>
-            <th>Última Modificación</th>
-            <th>Acciones</th>
+          <tr style={{ backgroundColor: "#333" }}>
+            <th style={{ padding: "10px", border: "1px solid #444" }}>Nombre</th>
+            <th style={{ padding: "10px", border: "1px solid #444" }}>Tamaño (bytes)</th>
+            <th style={{ padding: "10px", border: "1px solid #444" }}>Acciones</th>
           </tr>
         </thead>
         <tbody>
           {files.map((f) => (
             <tr key={f.key}>
-              <td>{f.name}</td>
-              <td>{f.size}</td>
-              <td>{new Date(f.lastModified).toLocaleString()}</td>
-              <td>
-                {/* CU-03 y CU-04 [2] */}
-                <a href={`https://archivacloud-p03dm.s3.us-west-2.amazonaws.com/${f.key}`} target="_blank" rel="noreferrer">
-                  Abrir
-                </a>
-                {" | "}
-                <button onClick={() => handleDelete(f.key)} style={{ color: "red", cursor: "pointer" }}>
-                  Eliminar
-                </button>
+              <td style={{ padding: "10px", border: "1px solid #444" }}>{f.name}</td>
+              <td style={{ padding: "10px", border: "1px solid #444" }}>{f.size}</td>
+              <td style={{ padding: "10px", border: "1px solid #444", textAlign: "center" }}>
+                <a href={`https://${BUCKET_NAME}.s3.${REGION}.amazonaws.com/${f.key}`} target="_blank" rel="noreferrer" style={{ color: "#2196f3", marginRight: "10px" }}>Abrir</a>
+                <button onClick={() => handleDelete(f.key)} style={{ color: "#f44336", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>Eliminar</button>
               </td>
             </tr>
           ))}
@@ -158,4 +156,5 @@ function App() {
     </div>
   );
 }
+
 export default App;
