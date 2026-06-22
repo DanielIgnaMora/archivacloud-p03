@@ -132,34 +132,78 @@ function App() {
         <p><strong>Status:</strong> {status}</p>
       </div>
 
-      <h3>Archivos</h3>
+<h3 style={{ marginTop: "30px" }}>Archivos</h3>
 
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr>
-            <th>Nombre</th>
-            <th>Tamaño</th>
-            <th>Hash</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
+<div style={styles.tableContainer}>
+  <table style={styles.table}>
+    <thead>
+      <tr>
+        <th style={styles.th}>Nombre</th>
+        <th style={styles.th}>Tamaño</th>
+        <th style={styles.th}>Hash</th>
+        <th style={styles.th}>Acciones</th>
+      </tr>
+    </thead>
 
-        <tbody>
-          {files.map((f) => (
-            <tr key={f.key}>
-              <td>{f.name}</td>
-              <td>{f.size}</td>
-              <td>{f.hash}</td>
-              <td>
-                <a href={f.url} target="_blank" rel="noreferrer">Abrir</a>
-                <button onClick={() => handleDelete(f.key)}>Eliminar</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <tbody>
+      {files.map((f) => (
+        <tr key={f.key} style={styles.tr}>
+          <td style={styles.td}>{f.name}</td>
+          <td style={styles.td}>{f.size}</td>
+          <td style={{ ...styles.td, fontSize: "12px" }}>{f.hash}</td>
+          <td style={styles.td}>
+            <a href={f.url} target="_blank" rel="noreferrer" style={styles.link}>
+              Abrir
+            </a>
+            <button onClick={() => handleDelete(f.key)} style={styles.deleteBtn}>
+              Eliminar
+            </button>
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>
     </div>
   );
 }
 
+const styles = {
+  tableContainer: {
+    backgroundColor: "#1e1e1e",
+    padding: "15px",
+    borderRadius: "10px",
+    border: "1px solid #333",
+    marginTop: "10px",
+  },
+  table: {
+    width: "100%",
+    borderCollapse: "collapse",
+  },
+  th: {
+    textAlign: "left",
+    padding: "10px",
+    borderBottom: "1px solid #444",
+    color: "#bbb",
+  },
+  tr: {
+    borderBottom: "1px solid #2a2a2a",
+  },
+  td: {
+    padding: "10px",
+  },
+  link: {
+    marginRight: "10px",
+    color: "#4fc3f7",
+    textDecoration: "none",
+  },
+  deleteBtn: {
+    padding: "5px 10px",
+    backgroundColor: "#e53935",
+    border: "none",
+    borderRadius: "5px",
+    color: "white",
+    cursor: "pointer",
+  },
+};
 export default App;
