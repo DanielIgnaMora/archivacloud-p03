@@ -67,7 +67,6 @@ async def get_presigned_url(request: UploadRequest):
 
     try:
         # SEC-08: El archivo se guarda con metadatos de integridad (Feature Extra P-03)
-        # Nota: La subida directa con metadata requiere que el frontend envíe el header x-amz-meta-sha256
         response = s3_client.generate_presigned_url(
             'put_object',
             Params={
@@ -88,7 +87,7 @@ async def get_presigned_url(request: UploadRequest):
         # SEC-07: Errores sin trazas técnicas [1]
         raise HTTPException(status_code=500, detail="Error al generar la URL de subida")
 
-# CU-02: Listar archivos con Hash SHA-256 (Feature Extra P-03) [2, 3]
+# CU-02: Listar archivos con Hash SHA-256 (Feature Extra P-03) - CORREGIDO CON URL FIRMADA
 @app.get("/api/files")
 async def list_files():
     try:
@@ -97,19 +96,35 @@ async def list_files():
 
         if 'Contents' in response:
             for obj in response['Contents']:
-                # Recuperar metadatos (hash) de cada objeto
-                meta = s3_client.head_object(Bucket=BUCKET_NAME, Key=obj['Key'])
-                file_hash = meta.get('Metadata', {}).get('sha256', 'No disponible')
+                # Evitar agregar la carpeta raíz virtual de la consulta
+                if obj['Key'] != "uploads/":
+                    # 1. Recuperar metadatos (hash) de cada objeto
+                    meta = s3_client.head_object(Bucket=BUCKET_NAME, Key=obj['Key'])
+                    file_hash = meta.get('Metadata', {}).get('sha256', 'No disponible')
 
-                files.append({
-                    "name": obj['Key'].split('/')[-1],
-                    "key": obj['Key'],
-                    "size": obj['Size'],
-                    "hash": file_hash, # Feature Extra: Hash SHA-256 [2]
-                    "url": f"https://{BUCKET_NAME}.s3.{REGION}.amazonaws.com/{obj['Key']}"
-                })
+                    # 2. GENERACIÓN MÁGICA: Crear la URL firmada temporal de descarga para evitar el AccessDenied
+                    try:
+                        download_url = s3_client.generate_presigned_url(
+                            'get_object',
+                            Params={
+                                'Bucket': BUCKET_NAME,
+                                'Key': obj['Key']
+                            },
+                            ExpiresIn=3600  # La firma expira en 1 hora
+                        )
+                    except Exception:
+                        download_url = None
+
+                    files.append({
+                        "name": obj['Key'].split('/')[-1],
+                        "key": obj['Key'],
+                        "size": obj['Size'],
+                        "hash": file_hash,  # Feature Extra: Hash SHA-256 [2]
+                        "url": download_url  # <-- Cambiado: Ahora envía el enlace seguro con token temporal
+                    })
         return files
-    except Exception:
+    except Exception as e:
+        print(f"Error detectado al listar: {e}")
         raise HTTPException(status_code=500, detail="Error al listar los archivos")
 
 # CU-04: Eliminar archivo (Hito Sprint 2) [3, 4]
@@ -124,3 +139,5 @@ async def delete_file(key: str):
         if e.response['Error']['Code'] == "404":
             raise HTTPException(status_code=404, detail="El archivo no existe")
         raise HTTPException(status_code=500, detail="Error al eliminar el archivo")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error interno al procesar la eliminación")
