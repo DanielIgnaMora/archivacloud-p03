@@ -13,132 +13,114 @@ load_dotenv()
 
 app = FastAPI(title="ArchivaCloud Backend - Pareja P-03")
 
-# SEC-02: CORS restrictivo para el puerto de Vite
+# SEC-02: CORS restrictivo para el dominio del frontend (Vite)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"], 
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configuración de AWS Academy y Parámetros P-03
+# Configuración de AWS y Parámetros P-03 [2]
+REGION = os.getenv("AWS_REGION", "us-west-2")
+BUCKET_NAME = os.getenv("BUCKET_NAME", "archivacloud-p03dm")
+MAX_SIZE = 20 * 1024 * 1024  # 20 MB para P-03
+
 s3_client = boto3.client(
     's3',
-    region_name=os.getenv("AWS_REGION", "us-west-2"), 
+    region_name=REGION,
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
     aws_session_token=os.getenv("AWS_SESSION_TOKEN"),
     config=Config(signature_version='s3v4')
 )
 
-BUCKET_NAME = os.getenv("BUCKET_NAME", "archivacloud-p03dm")
-
-# SEC-03: Modelo de validación de entrada con Pydantic
+# SEC-03: Modelo de validación de entrada con Feature Extra [2, 3]
 class UploadRequest(BaseModel):
     fileName: str = Field(..., min_length=1)
     fileType: str = Field(..., min_length=3)
-    fileSize: int = Field(..., gt=0)
+    fileSize: int = Field(..., gt=0, le=MAX_SIZE) # SEC-04: Límite de tamaño
+    fileHash: str = Field(..., min_length=64, max_length=64) # Hash SHA-256 (P-03)
 
-# SEC-03: Función de sanitización de nombre de archivo
+# SEC-03: Función de sanitización de nombre de archivo [1]
 def sanitize_filename(filename: str) -> str:
     name, ext = os.path.splitext(filename)
     clean_name = re.sub(r'[^a-zA-Z0-9.-]', '_', name)
     return f"{clean_name}{ext.lower()}"
 
-# Endpoint de Salud (Requisito Sprint 1)
+# Endpoint de Salud (Hito Sprint 1/2) [4]
 @app.get("/healthz")
-def health_check():
-    return {
-        "status": "ok", 
-        "service": "ArchivaCloud P-03", 
-        "region": "us-west-2",
-        "bucket": BUCKET_NAME
-    }
+async def health_check():
+    return {"status": "ok", "service": "ArchivaCloud P-03", "bucket": BUCKET_NAME}
 
-# CU-01 & CU-05: Generar Presigned URL con validaciones P-03
+# CU-01 & CU-05: Generar Presigned URL con validaciones P-03 y Feature Extra [2, 3]
 @app.post("/api/upload/presigned-url")
-def get_presigned_url(request: UploadRequest):
-    # Validar tipo de archivo (P-03: MP3, WAV)
+async def get_presigned_url(request: UploadRequest):
+    # Validar tipo de archivo para P-03 (MP3, WAV) [2]
     allowed_types = ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp3"]
     if request.fileType.lower() not in allowed_types:
-        raise HTTPException(status_code=400, detail="Tipo de archivo no permitido para P-03 (Solo MP3/WAV)")
+        raise HTTPException(status_code=400, detail="Tipo de archivo no permitido (Solo MP3/WAV)")
 
-    # Validar tamaño (P-03: 20 MB = 20,971,520 bytes)
-    max_size = 20 * 1024 * 1024
-    if request.fileSize > max_size:
-        raise HTTPException(status_code=400, detail="El archivo excede el límite de 20 MB")
-
-    sanitized_name = sanitize_filename(request.fileName)
-    file_key = f"uploads/{sanitized_name}"
+    clean_name = sanitize_filename(request.fileName)
+    key = f"uploads/{clean_name}"
 
     try:
-        presigned_url = s3_client.generate_presigned_url(
+        # SEC-08: El archivo se guarda con metadatos de integridad (Feature Extra P-03)
+        # Nota: La subida directa con metadata requiere que el frontend envíe el header x-amz-meta-sha256
+        response = s3_client.generate_presigned_url(
             'put_object',
             Params={
                 'Bucket': BUCKET_NAME,
-                'Key': file_key,
-                'ContentType': request.fileType
+                'Key': key,
+                'ContentType': request.fileType,
+                'Metadata': {
+                    'sha256': request.fileHash  # Guardamos el hash como metadato [2]
+                }
             },
             ExpiresIn=3600
         )
         return {
-            "presignedUrl": presigned_url,
-            "key": file_key,
-            "publicUrl": f"https://{BUCKET_NAME}.s3.amazonaws.com/{file_key}"
+            "presignedUrl": response,
+            "key": key
         }
     except Exception:
-        # SEC-07: Error sin trazas técnicas
+        # SEC-07: Errores sin trazas técnicas [1]
         raise HTTPException(status_code=500, detail="Error al generar la URL de subida")
 
-# CU-02: Listar archivos (Hito Sprint 2) - CORREGIDO CON URL FIRMADA DE LECTURA
+# CU-02: Listar archivos con Hash SHA-256 (Feature Extra P-03) [2, 3]
 @app.get("/api/files")
-def list_files():
+async def list_files():
     try:
         response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix="uploads/")
         files = []
-        
+
         if 'Contents' in response:
             for obj in response['Contents']:
-                # Solo incluir archivos reales, no la carpeta en sí
-                if obj['Key'] != "uploads/":
-                    
-                    # CORRECCIÓN AQUÍ: Generamos una URL firmada temporal de descarga para cada archivo
-                    try:
-                        download_url = s3_client.generate_presigned_url(
-                            'get_object',
-                            Params={
-                                'Bucket': BUCKET_NAME,
-                                'Key': obj['Key']
-                            },
-                            ExpiresIn=3600 # La firma es válida por 1 hora
-                        )
-                    except Exception:
-                        download_url = None
+                # Recuperar metadatos (hash) de cada objeto
+                meta = s3_client.head_object(Bucket=BUCKET_NAME, Key=obj['Key'])
+                file_hash = meta.get('Metadata', {}).get('sha256', 'No disponible')
 
-                    files.append({
-                        "key": obj['Key'],
-                        "name": obj['Key'].replace("uploads/", ""),
-                        "size": obj['Size'],
-                        "lastModified": obj['LastModified'].isoformat(),
-                        "url": download_url # <-- Enviamos la URL firmada al Frontend
-                    })
+                files.append({
+                    "name": obj['Key'].split('/')[-1],
+                    "key": obj['Key'],
+                    "size": obj['Size'],
+                    "hash": file_hash, # Feature Extra: Hash SHA-256 [2]
+                    "url": f"https://{BUCKET_NAME}.s3.{REGION}.amazonaws.com/{obj['Key']}"
+                })
         return files
     except Exception:
-        raise HTTPException(status_code=500, detail="No se pudo obtener la lista de archivos")
+        raise HTTPException(status_code=500, detail="Error al listar los archivos")
 
-# CU-04: Eliminar archivo (Hito Sprint 2)
+# CU-04: Eliminar archivo (Hito Sprint 2) [3, 4]
 @app.delete("/api/files/{key:path}")
-def delete_file(key: str):
+async def delete_file(key: str):
     try:
-        # Verificar que el archivo existe antes de intentar borrar
+        # Verificar que el archivo existe (SEC-03) [1]
         s3_client.head_object(Bucket=BUCKET_NAME, Key=key)
-        
         s3_client.delete_object(Bucket=BUCKET_NAME, Key=key)
-        return {"message": f"Archivo {key} eliminado exitosamente"}
+        return {"message": "Archivo eliminado correctamente"}
     except ClientError as e:
         if e.response['Error']['Code'] == "404":
-            raise HTTPException(status_code=404, detail="El archivo no existe en el bucket")
+            raise HTTPException(status_code=404, detail="El archivo no existe")
         raise HTTPException(status_code=500, detail="Error al eliminar el archivo")
-    except Exception:
-        raise HTTPException(status_code=500, detail="Error interno al procesar la eliminación")
