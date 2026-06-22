@@ -32,11 +32,10 @@ function App() {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   };
 
-  // ✅ FIX aplicado aquí
   const handleFileChange = (e) => {
     if (!e.target.files || e.target.files.length === 0) return;
 
-    const selectedFile = e.target.files[0]; // 👈 clave
+    const selectedFile = e.target.files[0];
 
     const name = selectedFile.name.toLowerCase();
     const isAllowed = name.endsWith('.mp3') || name.endsWith('.wav');
@@ -67,15 +66,20 @@ function App() {
       setStatus("Solicitando permiso a S3...");
       setUploadProgress(0);
 
+      // ✅ FIX 422: ahora mandamos fileSize
       const { data } = await axios.post("http://localhost:8000/api/upload/presigned-url", {
         fileName: file.name,
         fileType: file.type || "audio/mpeg",
+        fileSize: file.size, // 👈 clave
         fileHash: fileHash
       });
 
       await axios.put(data.presignedUrl, file, {
-        headers: { "Content-Type": file.type || "audio/mpeg" },
-        onUploadProgress: (p) => setUploadProgress(Math.round((p.loaded * 100) / p.total))
+        headers: { "Content-Type": file.type || "audio/mpeg",
+          "x-amz-meta-sha256": fileHash
+         },
+        onUploadProgress: (p) =>
+          setUploadProgress(Math.round((p.loaded * 100) / p.total))
       });
 
       setStatus("¡Subida exitosa e integridad verificada!");
@@ -83,13 +87,13 @@ function App() {
       setUploadProgress(0);
       fetchFiles();
     } catch (error) {
-      console.error(error);
-      setStatus("Error en el proceso de subida o cálculo de hash.");
+      console.error("Detalle error:", error.response?.data || error.message);
+      setStatus("Error en el proceso de subida.");
     }
   };
 
   const handleDelete = async (key) => {
-    if (!window.confirm("¿Está seguro de eliminar este archivo? Esta acción es irreversible.")) return;
+    if (!window.confirm("¿Está seguro de eliminar este archivo?")) return;
 
     try {
       setStatus("Eliminando archivo...");
@@ -97,7 +101,7 @@ function App() {
       setStatus("Archivo eliminado exitosamente.");
       fetchFiles();
     } catch (error) {
-      setStatus("Error al intentar eliminar el archivo.");
+      setStatus("Error al eliminar.");
     }
   };
 
@@ -109,58 +113,46 @@ function App() {
       </center>
 
       <div style={{ border: "1px solid #333", padding: "20px", margin: "20px 0", borderRadius: "10px", backgroundColor: "#1e1e1e" }}>
-        <h3>Subir Nuevo Audio (MP3/WAV - Máx 20MB)</h3>
+        <h3>Subir Audio</h3>
 
         <input type="file" accept=".mp3,.wav" onChange={handleFileChange} />
 
         <button onClick={handleUpload} disabled={!file} style={{ marginLeft: "10px", padding: "8px 20px" }}>
-          Subir a S3
+          Subir
         </button>
 
         {uploadProgress > 0 && (
-          <div style={{ width: "100%", backgroundColor: "#444", marginTop: "15px", borderRadius: "5px" }}>
-            <div style={{ width: `${uploadProgress}%`, height: "20px", backgroundColor: "#4caf50", textAlign: "center", color: "black", fontWeight: "bold" }}>
+          <div style={{ width: "100%", backgroundColor: "#444", marginTop: "15px" }}>
+            <div style={{ width: `${uploadProgress}%`, height: "20px", backgroundColor: "#4caf50" }}>
               {uploadProgress}%
             </div>
           </div>
         )}
 
-        <p style={{ marginTop: "10px" }}>
-          <strong>Status:</strong> {status}
-        </p>
+        <p><strong>Status:</strong> {status}</p>
       </div>
 
-      <h3>Tus Archivos en la Nube (CU-02)</h3>
+      <h3>Archivos</h3>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #444" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
-          <tr style={{ backgroundColor: "#333" }}>
-            <th style={{ padding: "10px", border: "1px solid #444" }}>Nombre</th>
-            <th style={{ padding: "10px", border: "1px solid #444" }}>Tamaño</th>
-            <th style={{ padding: "10px", border: "1px solid #444" }}>Hash SHA-256</th>
-            <th style={{ padding: "10px", border: "1px solid #444" }}>Acciones</th>
+          <tr>
+            <th>Nombre</th>
+            <th>Tamaño</th>
+            <th>Hash</th>
+            <th>Acciones</th>
           </tr>
         </thead>
 
         <tbody>
           {files.map((f) => (
             <tr key={f.key}>
-              <td style={{ padding: "10px", border: "1px solid #444" }}>{f.name}</td>
-              <td style={{ padding: "10px", border: "1px solid #444" }}>{f.size} bytes</td>
-              <td style={{ padding: "10px", border: "1px solid #444", fontSize: "0.8em", fontFamily: "monospace" }}>
-                {f.hash || "No disponible"}
-              </td>
-              <td style={{ padding: "10px", border: "1px solid #444", textAlign: "center" }}>
-                <a href={f.url} target="_blank" rel="noreferrer" style={{ color: "#2196f3", marginRight: "10px" }}>
-                  Abrir
-                </a>
-
-                <button
-                  onClick={() => handleDelete(f.key)}
-                  style={{ color: "#f44336", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
-                >
-                  Eliminar
-                </button>
+              <td>{f.name}</td>
+              <td>{f.size}</td>
+              <td>{f.hash}</td>
+              <td>
+                <a href={f.url} target="_blank" rel="noreferrer">Abrir</a>
+                <button onClick={() => handleDelete(f.key)}>Eliminar</button>
               </td>
             </tr>
           ))}
