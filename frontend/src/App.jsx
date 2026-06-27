@@ -9,7 +9,7 @@ function App() {
 
   const BUCKET_NAME = "archivacloud-p03dm";
   const REGION = "us-west-2";
-  const MAX_SIZE = 20 * 1024 * 1024;
+  const MAX_SIZE = 20 * 1024 * 1024; // 20 MB
 
   useEffect(() => {
     fetchFiles();
@@ -73,31 +73,30 @@ function App() {
         fileHash: fileHash
       });
 
-      // 🔥 SUBIDA A S3
       await axios.put(data.presignedUrl, file, {
-        headers: {
-          "Content-Type": file.type || "audio/mpeg",
+        headers: { "Content-Type": file.type || "audio/mpeg",
           "x-amz-meta-sha256": fileHash
-        },
+         },
         onUploadProgress: (p) =>
           setUploadProgress(Math.round((p.loaded * 100) / p.total))
       });
 
-      // 🔥 NUEVO: GUARDAR EN DYNAMODB
-      await axios.post("http://localhost:8000/api/proyectos", {
-        id_tabla: Date.now().toString(),
-        nombre_proyecto: file.name,
-        descripcion: `Archivo subido (${fileHash.substring(0, 10)}...)`
+      await axios.post("http://localhost:8000/api/files/confirm", {
+        key: data.key,
+        fileName: file.name,
+        fileSize: file.size,
+        fileHash: fileHash
       });
 
-      setStatus("¡Subida exitosa + guardado en DynamoDB!");
+      setStatus("¡Subida exitosa e integridad verificada!");
       setFile(null);
       setUploadProgress(0);
       fetchFiles();
-
     } catch (error) {
       console.error("Detalle error:", error.response?.data || error.message);
-      setStatus("Error en el proceso de subida.");
+      setUploadProgress(0);
+      const detail = error.response?.data?.detail;
+      setStatus(detail ? `Error: ${detail}` : "Error en el proceso de subida.");
     }
   };
 
@@ -141,38 +140,38 @@ function App() {
         <p><strong>Status:</strong> {status}</p>
       </div>
 
-      <h3 style={{ marginTop: "30px" }}>Archivos</h3>
+<h3 style={{ marginTop: "30px" }}>Archivos</h3>
 
-      <div style={styles.tableContainer}>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>Nombre</th>
-              <th style={styles.th}>Tamaño</th>
-              <th style={styles.th}>Hash</th>
-              <th style={styles.th}>Acciones</th>
-            </tr>
-          </thead>
+<div style={styles.tableContainer}>
+  <table style={styles.table}>
+    <thead>
+      <tr>
+        <th style={styles.th}>Nombre</th>
+        <th style={styles.th}>Tamaño</th>
+        <th style={styles.th}>Hash</th>
+        <th style={styles.th}>Acciones</th>
+      </tr>
+    </thead>
 
-          <tbody>
-            {files.map((f) => (
-              <tr key={f.key} style={styles.tr}>
-                <td style={styles.td}>{f.name}</td>
-                <td style={styles.td}>{f.size}</td>
-                <td style={{ ...styles.td, fontSize: "12px" }}>{f.hash}</td>
-                <td style={styles.td}>
-                  <a href={f.url} target="_blank" rel="noreferrer" style={styles.link}>
-                    Abrir
-                  </a>
-                  <button onClick={() => handleDelete(f.key)} style={styles.deleteBtn}>
-                    Eliminar
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <tbody>
+      {files.map((f) => (
+        <tr key={f.key} style={styles.tr}>
+          <td style={styles.td}>{f.name}</td>
+          <td style={styles.td}>{f.size}</td>
+          <td style={{ ...styles.td, fontSize: "12px" }}>{f.hash}</td>
+          <td style={styles.td}>
+            <a href={f.url} target="_blank" rel="noreferrer" style={styles.link}>
+              Abrir
+            </a>
+            <button onClick={() => handleDelete(f.key)} style={styles.deleteBtn}>
+              Eliminar
+            </button>
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>
     </div>
   );
 }
@@ -215,5 +214,4 @@ const styles = {
     cursor: "pointer",
   },
 };
-
 export default App;
