@@ -25,7 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuración de AWS y Parámetros P-03 [2]
+# Configuración de AWS y Parámetros P-03 
 REGION = os.getenv("AWS_REGION", "us-west-2")
 BUCKET_NAME = os.getenv("BUCKET_NAME", "archivacloud-p03dm")
 MAX_SIZE = 20 * 1024 * 1024  # 20 MB para P-03
@@ -49,7 +49,7 @@ dynamodb = boto3.resource(
 dynamo_table = dynamodb.Table('database_dynamo')
 
 
-# SEC-03: Modelo de validación de entrada con Feature Extra [2, 3]
+# SEC-03: Modelo de validación de entrada con Feature Extra 
 class UploadRequest(BaseModel):
     fileName: str = Field(..., min_length=1)
     fileType: str = Field(..., min_length=3)
@@ -64,7 +64,7 @@ class ConfirmRequest(BaseModel):
     fileHash: str = Field(..., min_length=64, max_length=64)
 
 
-# SEC-03: Función de sanitización de nombre de archivo [1]
+# SEC-03: Función de sanitización de nombre de archivo 
 def sanitize_filename(filename: str) -> str:
     name, ext = os.path.splitext(filename)
     clean_name = re.sub(r'[^a-zA-Z0-9.-]', '_', name)
@@ -82,13 +82,13 @@ def delete_from_dynamo_by_s3_key(s3_key: str):
         )
 
 
-# Endpoint de Salud (Hito Sprint 1/2) [4]
+# Endpoint de Salud 
 @app.get("/healthz")
 async def health_check():
     return {"status": "ok", "service": "ArchivaCloud P-03", "bucket": BUCKET_NAME}
 
 
-# CU-01 & CU-05: Generar Presigned URL con validaciones P-03 y Feature Extra [2, 3]
+# CU-01 & CU-05: Generar Presigned URL con validaciones P-03 y Feature Extra 
 @app.post("/api/upload/presigned-url")
 async def get_presigned_url(request: UploadRequest):
     allowed_types = ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp3"]
@@ -148,7 +148,7 @@ async def confirm_upload(request: ConfirmRequest):
         raise HTTPException(status_code=500, detail="Error al registrar en DynamoDB")
 
 
-# CU-02: Listar archivos con Hash SHA-256 (Feature Extra P-03)
+# CU-02: Listar archivos con Hash SHA-256
 @app.get("/api/files")
 async def list_files():
     try:
